@@ -178,7 +178,8 @@ df = clear_boxplot(df, "log_backers")
 
 # NUMDAYS
 df["log_num_days"] = np.log(df["num_days"] + 1)
-
+ax = sns.distplot(df["log_num_days"])
+plt.show()
 # create_boxplot(df, "log_num_days")
 
 # DEFINE PATTERNS
@@ -298,6 +299,9 @@ plt.show()
 df_transformed_data["percentage_of_pledged"] = round(df_transformed_data['pledged'] / df_transformed_data['goal'] * 100,
                                                      2)
 df_transformed_data["percentage_of_pledged"] = df_transformed_data["percentage_of_pledged"].astype(np.float64)
+df_transformed_data["log_percentage_of_pledged"] = np.log(df_transformed_data["percentage_of_pledged"] + 1)
+ax = sns.distplot(df_transformed_data["log_percentage_of_pledged"])
+plt.show()
 spec = df_transformed_data[
     ["goal", "pledged", "backers", "num_days", "percentage_of_pledged", "country", "main_category", "category",
      "currency"]]
