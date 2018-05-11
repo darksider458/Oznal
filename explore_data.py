@@ -8,12 +8,16 @@ import sys
 
 from datetime import timedelta
 
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
 from mlxtend.preprocessing import minmax_scaling
+from numpy import int64
 from scipy.stats import pearsonr, spearmanr, stats, boxcox
 from sklearn import preprocessing
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from sklearn.cross_validation import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.datasets import load_iris
 from sklearn.ensemble import ExtraTreesClassifier, forest, \
     RandomForestClassifier, AdaBoostClassifier, VotingClassifier, GradientBoostingClassifier, BaggingClassifier
 from sklearn.feature_selection import SelectKBest, chi2, \
@@ -28,11 +32,13 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import resample
 import numpy as np
+import lightgbm as lgb
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
 
 
+# calculate chi2squaretest for the series
 def chi2_squared_test(df1, df2, df3, series):
     counted_df1 = df1[series].value_counts()
     counted_df2 = df2[series].value_counts()
@@ -42,6 +48,7 @@ def chi2_squared_test(df1, df2, df3, series):
     print('P-value of dataset supplied for series: %.8f' % p)
 
 
+# calculate mean of a series
 def calculate_mean(series):
     suma = 0
     for entry in series:
@@ -50,10 +57,10 @@ def calculate_mean(series):
     return suma / len(series)
 
 
-def compute_covariance_matrix(train_x, test_x):
+# computes covariance matrix
+def compute_covariance_matrix(train_x):
     sc = StandardScaler()
     X_train_std = sc.fit_transform(train_x)
-    X_test_std = sc.fit_transform(test_x)
 
     cov_mat = np.cov(X_train_std.T)
     eigen_vals, eigen_vecs = np.linalg.eig(cov_mat)
@@ -74,6 +81,7 @@ def compute_covariance_matrix(train_x, test_x):
     plt.show()
 
 
+# merges all on PARAM into one - used to merge non US countries into one category - NON US
 def merge_non_param(df, series_name, param):
     vals = df[series_name].values
     non_us_vals = []
@@ -89,6 +97,7 @@ def merge_non_param(df, series_name, param):
     return df
 
 
+# calculates pvalues of dataseries
 def calculate_pvalues(df):
     df = df.dropna()._get_numeric_data()
     dfcols = pd.DataFrame(columns=df.columns)
@@ -100,6 +109,7 @@ def calculate_pvalues(df):
     return pvalues
 
 
+# calculates pvalues of dataset via spearman method
 def calculate_pvalues_spearman(df):
     df = df.dropna()._get_numeric_data()
     dfcols = pd.DataFrame(columns=df.columns)
@@ -111,6 +121,7 @@ def calculate_pvalues_spearman(df):
     return pvalues
 
 
+# creates boxplot for specific given series
 def create_boxplot(df, name_series):
     plt.figure(figsize=(10, 8))
     plt.subplot(211)
@@ -123,6 +134,7 @@ def create_boxplot(df, name_series):
     plt.show()
 
 
+# using boxplot we clean the data using upper or lower quartiles
 def clear_boxplot(df, name_series):
     q75 = np.percentile(df[name_series], 75)
     q25 = np.percentile(df[name_series], 25)
@@ -142,6 +154,7 @@ def clear_boxplot(df, name_series):
     return tmp
 
 
+# calculates Kfold validation -> this was latter replaced with skilearn method cross_val_score
 def calculateKFoldvalidation(y_train, X_train, classifier):
     kfold = StratifiedKFold(y=y_train.values, n_folds=10, random_state=1)
     scores = []
@@ -150,9 +163,10 @@ def calculateKFoldvalidation(y_train, X_train, classifier):
         score = classifier.score(X_train.values[test], y_train.values[test])
         scores.append(score)
         print('Fold: %s' % (k + 1))
-    print('CV accuracy: %.3f +/- %.3f' % (np.mean(scores), np.std(scores)))
+    print('CV accuracy: %.4f +/- %.4f' % (np.mean(scores), np.std(scores)))
 
 
+# upsamples the dataset
 def upsampleDataset(df_transformed):
     # UPSAMPLE
     # Separate classes for upsampling
@@ -173,6 +187,7 @@ def upsampleDataset(df_transformed):
     return pd.concat([df_failed, df_cancelled_upsampled, df_successful_upsampled])
 
 
+# downsamples the dataset
 def downsampleDataset(df_transformed):
     # DOWNSAMPLE
     # Separate classes for downsampling
@@ -193,11 +208,14 @@ def downsampleDataset(df_transformed):
     return pd.concat([df_cancelled, df_failed_upsample, df_successful_upsampled])
 
 
+# main method
 if __name__ == '__main__':
+    # we load the csv
     df = pd.read_csv('ks_with_days_201612.csv', encoding="ISO-8859-1", sep='\t',
                      na_values=['NAN'])
     df.head()
     df.info()
+    # dropNA
     df.dropna(inplace=True)
     # DROP UNUSEFUL COLUMNS AND RENAME THEM
     # df.drop(df.columns[[13, 14, 15, 16]], axis=1, inplace=True)
@@ -208,44 +226,17 @@ if __name__ == '__main__':
                        'pledged ': 'pledged', 'state ': 'state',
                        'backers ': 'backers', 'usd pledged ': 'usd_pledged'}
               , inplace=True)
-    # print(df.columns)
-    # print(df.head())
+    # instantiate
     d = defaultdict(preprocessing.LabelEncoder)
     onehot = defaultdict(preprocessing.OneHotEncoder)
     import numpy as np
 
-    df["log_goal"] = np.log(df["goal"] + 1)
-    # create_boxplot(df, "log_goal")
-    df = clear_boxplot(df, "log_goal")
-    # create_boxplot(df, "log_goal")
-    # df.drop(columns=['goal'], inplace=True)
-    # PLEDGED
-    df["pledged"] = df["pledged"].astype(np.float)
-    df["log_pledged"] = np.log(df["pledged"] + 1)
-    # create_boxplot(df, "log_pledged")
-    df = clear_boxplot(df, "log_pledged")
-    # create_boxplot(df, "log_pledged")
-    # df.drop(columns=['pledged'], inplace=True)
-    # BACKERS
-    df["log_backers"] = np.log(df["backers"] + 1)
-    # create_boxplot(df, "log_backers")
-    df = clear_boxplot(df, "log_backers")
-    # create_boxplot(df, "log_pledged")
-    # df.drop(columns=['backers'], inplace=True)
-    # NUMDAYS
-    df["log_num_days"] = np.log(df["num_days"] + 1)
-    # ax = sns.distplot(df["log_num_days"])
-    # plt.show()
-    # create_boxplot(df, "log_num_days")
-    # DEFINE PATTERNS
     patternFloatDet = "[+-]?([0-9]*[.])?[0-9]+"
     patternDelDate = "^\d{4}\-(0?[1-9]|1[012])\-(0?[1-9]|[12][0-9]|3[01]) "
     patternStringDel = "[A-z]"
     # DELETE ROWS WHICH WE DONT WANT FROM STATE
     df = df[df.state.str.contains("undefined") == False]
-    # print(len(df.state))
     df = df[df.state.str.contains("live") == False]
-    # print(len(df.state))
     df = df[df.state.str.contains("suspended") == False]
     # WE DO CHISQUARE TEST WITH CATEGORICAL DATA
     # df_onlyS = df[df.state.str.contains("successful") == True]
@@ -274,12 +265,8 @@ if __name__ == '__main__':
     df_transformed['backers'] = df_simple.backers.astype(np.float64)
     df_transformed['state'] = df_transformed.state.astype(np.int)
     df_transformed['num_days'] = df_simple['num_days'].astype(np.float64)
-    print(len(df_transformed))
     df_transformed.dropna(inplace=True)
     print(len(df_transformed))
-    # df_transformed["percentage_of_pledged"] = round(df_transformed_data['pledged'] / df_transformed_data['goal'] * 100,
-    #                                                 2)
-    # df_transformed["percentage_of_pledged"] = df_transformed["percentage_of_pledged"].astype(np.float64)
     # # WE ARE GONNA DO THE WILCOXON TEST
     # df_onlyS = df_transformed[df_transformed.state.str.contains("successful") == True]
     #
@@ -306,14 +293,16 @@ if __name__ == '__main__':
     #
     # pp = sns.jointplot(x=df["log_backers"], y=df_transformed.state, bins=5, kind="hex")
     # plt.show()
-    # UPSAMPLE
-    df_transformed = downsampleDataset(df_transformed)
+    # UPSAMPLE - upsampleDataset method, DOWNSAMPLE - downsampleDataset method, normal - delete the line below
+    df_transformed = upsampleDataset(df_transformed)
     df_transformed["goal"] = boxcox(df_transformed["goal"] + 0.001)[0]
     df_transformed["pledged"] = boxcox(df_transformed["pledged"] + 0.001)[0]
     df_transformed["num_days"] = boxcox(df_transformed["num_days"] + 0.001)[0]
+    # WE ALSO TRIED MINMAX SCALING IN THE PAST
     # df_transformed.goal = minmax_scaling(df_transformed.goal, columns=[0])
     # df_transformed.pledged = minmax_scaling(df_transformed.pledged, columns=[0])
     # df_transformed.num_days = minmax_scaling(df_transformed.num_days, columns=[0])
+    # NEW FEATURES
     df_transformed["percentage_of_pledged"] = round(df_transformed['pledged'] / df_transformed['goal'] * 100,
                                                     4)
     df_transformed["percentage_of_pledged"] = df_transformed["percentage_of_pledged"].astype(np.float64)
@@ -331,6 +320,10 @@ if __name__ == '__main__':
     df_transformed_data = df_transformed[
         ["goal", "pledged", "country", "main_category", "category", "currency",
          "backers", "num_days"]]
+    df_transformed_data["country"] = df_transformed_data["country"].astype(int64)
+    df_transformed_data["main_category"] = df_transformed_data["main_category"].astype(int64)
+    df_transformed_data["category"] = df_transformed_data["category"].astype(int64)
+    df_transformed_data["currency"] = df_transformed_data["currency"].astype(int64)
     # END UPSAMPLE
     # calculate_pvalues(spec)
     # sns.heatmap(spec.corr(method="pearson"), xticklabels=spec.columns.values, yticklabels=spec.columns.values)
@@ -343,9 +336,6 @@ if __name__ == '__main__':
     #                          "pledge_per_day"]], df_transformed["state"],
     #     test_size=0.2, random_state=0)
     #
-    # knn_tt = KNeighborsClassifier(n_neighbors=20)
-    # knn_tt.fit(train_x, train_y)
-    # predicted_y = knn_tt.predict(test_x)
     #
     # print('Numb of mismatch KNeighborsClassifier using the pledged percentage only float features: ' + str(
     #     (test_y != predicted_y).sum()))
@@ -355,16 +345,28 @@ if __name__ == '__main__':
     df_transformed["state"] = label_binarize(df_transformed["state"], classes=[0, 1, 2])
     train_x, test_x, train_y, test_y = train_test_split(df_transformed_data, df_transformed["state"], test_size=0.2,
                                                         random_state=0)
-    #
+
+    # KNN
+    # knn_tt = KNeighborsClassifier(n_neighbors=20)
+    # scores = cross_val_score(estimator=knn_tt, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "KNN"))
+    # knn_tt.fit(train_x, train_y)
+    # predicted_y = knn_tt.predict(test_x)
+
+    # COVARIANCE MATRIX
     # compute_covariance_matrix(train_x, test_x)
-    clf = RandomForestClassifier(n_estimators=250, random_state=0, max_depth=3)
-    clf = clf.fit(train_x, train_y)
-    print(clf.feature_importances_)
-    importances = clf.feature_importances_
-    std = np.std([tree.feature_importances_ for tree in clf.estimators_],
-                 axis=0)
-    indices = np.argsort(importances)[::-1]
-    feat_labels = df_transformed_data.columns[1:]
+
+    # RANDOM FOREST AND HIS FEATURE IMPORTANCE
+    # clf = RandomForestClassifier(n_estimators=1000, random_state=0, max_depth=5)
+    # scores = cross_val_score(estimator=clf, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "RF"))
+    # clf = clf.fit(train_x, train_y)
+    # print(clf.feature_importances_)
+    # importances = clf.feature_importances_
+    # std = np.std([tree.feature_importances_ for tree in clf.estimators_],
+    #              axis=0)
+    # indices = np.argsort(importances)[::-1]
+    # feat_labels = df_transformed_data.columns[1:]
     # # Print the feature ranking
     # print("Feature ranking:")
     #
@@ -378,19 +380,14 @@ if __name__ == '__main__':
     # plt.xticks(range(train_x.shape[1]), indices)
     # plt.xlim([-1, train_x.shape[1]])
     # plt.show()
-    predicted_y = clf.predict(test_x)
-    print('Numb of mismatch RandomForestClassifier: ' + str(
-        (test_y != predicted_y).sum()))
-    print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
+    # predicted_y = clf.predict(test_x)
+    # print('Numb of mismatch RandomForestClassifier: ' + str(
+    #     (test_y != predicted_y).sum()))
+    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
+    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
     # calculateKFoldvalidation(df_transformed["state"], df_transformed_data, clf)
-    # WITHOUT PLEDGED IN PERCENTAGE - FLOAT
-    knn_ttALL = KNeighborsClassifier()
-    knn_ttALL.fit(train_x, train_y)
-    predicted_y = knn_ttALL.predict(test_x)
-    print('Numb of mismatch KNeighborsClassifier: ' + str(
-        (test_y != predicted_y).sum()))
-    print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
 
+    # HYPERPARAMETER TUNING WITH KNN - num of neighbors with plot of results
     # myList = list(range(1, 50))
     #
     # # subsetting just the odd ones
@@ -402,7 +399,7 @@ if __name__ == '__main__':
     # # perform 10-fold cross validation
     # for k in neighbors:
     #     knn = KNeighborsClassifier(n_neighbors=k)
-    #     scores = cross_val_score(knn, train_x, train_y, cv=10, scoring='accuracy')
+    #     scores = cross_val_score(knn, train_x, train_y, cv=10, scoring='roc_auc')
     #     cv_scores.append(scores.mean())
     #     nums.append(k)
     #
@@ -415,59 +412,31 @@ if __name__ == '__main__':
     # plt.ylabel('Accuracy')
     # plt.show()
     # calculateKFoldvalidation(df_transformed["state"], df_transformed_data, knn_tt)
+
     # GAUSSIAN WITH ALL
-    gnbALL = GaussianNB()
-    gnbALL.fit(train_x, train_y)
-    predicted_y = gnbALL.predict(test_x)
-    print('Numb of mismatch GaussianNB: ' + str((test_y != predicted_y).sum()))
-    print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
-    # calculateKFoldvalidation(df_transformed["state"], df_transformed_data, gnb)
-    # GAUSSIAN WITH ONE HOT ENCODER WITHOUT SUB CATEGORY WITHOUT PLEDGED PERCENTAGE
-    # gausian_df = pd.get_dummies(df[["country", "main_category", "currency", "category"]])
-    # gausian_df["pledged"] = df["pledged"].astype(np.float64)
-    # gausian_df["goal"] = df["goal"].astype(np.float64)
-    # gausian_df['backers'] = df.backers.astype(np.float64)
-    # gausian_df.dropna(inplace=True)
-    # gausian_df['num_days'] = df["num_days"].astype(np.int)
-    #
-    # print(gausian_df.info())
-    #
-    # train_gausian_x, test_gausian_x, train_y, test_y = train_test_split(gausian_df,
-    #                                                                     df_transformed["state"],
-    #                                                                     test_size=0.2, random_state=0)
-    # gnb_hot = GaussianNB()
-    # gnb_hot.fit(train_gausian_x, train_y)
-    # predicted_y = gnb_hot.predict(test_gausian_x)
-    #
-    # print('Numb of mismatch GaussianNB with hot encoder: ' + str((test_y != predicted_y).sum()))
+    # gnbALL = GaussianNB()
+    # scores = cross_val_score(estimator=gnbALL, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "GNB"))
+    # gnbALL.fit(train_x, train_y)
+    # predicted_y = gnbALL.predict(test_x)
+    # print('Numb of mismatch GaussianNB: ' + str((test_y != predicted_y).sum()))
     # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
-    #
-    # # calculateKFoldvalidation(df_transformed["state"], gausian_df, gnb_hot)
-    #
-    # # GAUSSIAN WITH ONE HOT ENCODER WITHOUT SUB CATEGORY WITH PLEDGED PERCENTAGE
-    # gausian_df["percentage_of_pledged"] = df_transformed_data["percentage_of_pledged"]
-    # gausian_df["pledge_per_day"] = df_transformed_data["pledge_per_day"]
-    #
-    # train_gausian_x_pledgedP, test_gausian_x_pledgedP, train_y, test_y = train_test_split(gausian_df,
-    #                                                                                       df_transformed["state"],
-    #                                                                                       test_size=0.2, random_state=0)
-    # gnb_hotP = GaussianNB()
-    # gnb_hotP.fit(train_gausian_x_pledgedP, train_y)
-    # predicted_yP = gnb_hotP.predict(test_gausian_x_pledgedP)
-    #
-    # print('Numb of mismatch GaussianNB with hot encoder with percentage pledged: ' + str((test_y != predicted_yP).sum()))
-    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_yP))
-    # calculateKFoldvalidation(df_transformed["state"], gausian_df, gnb_hotP)
-    lgALL = LogisticRegression()
-    lgALL.fit(train_x, train_y)
-    predicted_y = lgALL.predict(test_x)
-    print('Numb of mismatch LogisticRegression: ' + str((test_y != predicted_y).sum()))
-    print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
+    # calculateKFoldvalidation(df_transformed["state"], df_transformed_data, gnb)
+
+    # LOGISTIC REGRESSION
+    # lgALL = LogisticRegression()
+    # scores = cross_val_score(estimator=lgALL, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "LGR"))
+    # lgALL.fit(train_x, train_y)
+    # predicted_y = lgALL.predict(test_x)
+    # print('Numb of mismatch LogisticRegression: ' + str((test_y != predicted_y).sum()))
+    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
     # calculateKFoldvalidation(df_transformed["state"], df_transformed_data, lg)
     # lg = LogisticRegression()
     # lg.fit(train_gausian_x, train_y)
     # predicted_y = lg.predict(test_gausian_x)
-    #
+
+    # LG WITH ONE HOT ENCODER
     # print('Numb of mismatch LogisticRegression with hot encoder: ' + str((test_y != predicted_y).sum()))
     # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
     # gausian_df.drop(columns=["percentage_of_pledged"], inplace=True)
@@ -476,13 +445,8 @@ if __name__ == '__main__':
     # lg.fit(train_gausian_x_pledgedP, train_y)
     # predicted_y = lg.predict(test_gausian_x_pledgedP)
     #
-    # gausian_df["percentage_of_pledged"] = df_transformed_data["percentage_of_pledged"]
-    # gausian_df["pledge_per_backer"] = df_transformed_data["pledge_per_backer"]
-    # gausian_df["pledge_per_day"] = df_transformed_data["pledge_per_day"]
-    # print('Numb of mismatch LogisticRegression with hot encoder with percentage pledged: : ' + str(
-    #     (test_y != predicted_y).sum()))
-    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
-    # calculateKFoldvalidation(df_transformed["state"], gausian_df, lg)
+
+    # KNN WITH THE ONE HOT ENCODER DATASET USED
     # knn_tt = KNeighborsClassifier()
     # knn_tt.fit(train_gausian_x, train_y)
     # predicted_y = knn_tt.predict(test_gausian_x)
@@ -492,18 +456,7 @@ if __name__ == '__main__':
     # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
     # gausian_df.drop(columns=["percentage_of_pledged"], inplace=True)
     # calculateKFoldvalidation(df_transformed["state"], gausian_df, knn_tt)
-    # knn_tt = KNeighborsClassifier()
-    # knn_tt.fit(train_gausian_x_pledgedP, train_y)
-    # predicted_y = knn_tt.predict(test_gausian_x_pledgedP)
-    #
-    # print('Numb of mismatch KNeighborsClassifier with hot encoder using the pledged percentage: ' + str(
-    #     (test_y != predicted_y).sum()))
-    # print('Accuracy: %.4f' % accuracy_score(test_y, predicted_y))
-    #
-    # gausian_df["percentage_of_pledged"] = df_transformed_data["percentage_of_pledged"]
-    # gausian_df["pledge_per_backer"] = df_transformed_data["pledge_per_backer"]
-    # gausian_df["pledge_per_day"] = df_transformed_data["pledge_per_day"]
-    # calculateKFoldvalidation(df_transformed["state"], gausian_df, knn_tt)
+
     # NOW WITH SCALING DATA - KN
     # scaled_data = minmax_scaling(df_transformed_data,
     #                              columns=["goal", "pledged", "backers", "percentage_of_pledged", "pledge_per_day",
@@ -522,30 +475,34 @@ if __name__ == '__main__':
     #     (test_scaled_y != predicted_y).sum()))
     # print('Accuracy: %.4f' % accuracy_score(test_scaled_y, predicted_y))
     # calculateKFoldvalidation(df_transformed["state"], scaled_data, knn_tt)
+
     # MAJORITY VOTE CLASSIFIER WITH ALL DATA
     # ADA BOOST
-    print("DecisionTree")
-    tree = DecisionTreeClassifier(random_state=11, max_features="auto", class_weight="balanced", max_depth=None)
-
-    param_grid = {"base_estimator__criterion": ["gini", "entropy"],
-                  "base_estimator__splitter": ["best", "random"],
-                  "learning_rate": [0.1, 0.01, 0.001],
-                  "n_estimators": [100, 250, 500]
-                  }
-
-    print("AdaBoost")
-    ada = AdaBoostClassifier(base_estimator=tree, learning_rate=0.01)
-
-    # run grid search
-    grid_search_ABC = GridSearchCV(ada, param_grid=param_grid, scoring='accuracy')
-
-    grid_search_ABC.fit(train_x, train_y)
-
-    print('Best parameter set: %s ' % grid_search_ABC.best_params_)
-    print('CV Accuracy: %.3f' % grid_search_ABC.best_score_)
-
-    clf = grid_search_ABC.best_estimator_
-    print('Test Accuracy: %.3f' % clf.score(test_x, test_y))
+    # print("DecisionTree")
+    # tree = DecisionTreeClassifier(random_state=11, max_features="auto", class_weight="balanced", max_depth=None)
+    # scores = cross_val_score(estimator=tree, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "DTREE"))
+    #
+    # param_grid = {"base_estimator__criterion": ["gini"],
+    #               "base_estimator__splitter": ["best"],
+    #               "learning_rate": [0.001],
+    #               "n_estimators": [500, 1000]
+    #               }
+    #
+    # ada = AdaBoostClassifier(base_estimator=tree, learning_rate=0.01)
+    # scores = cross_val_score(estimator=ada, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "ADA"))
+    #
+    # # run grid search
+    # grid_search_ABC = GridSearchCV(ada, param_grid=param_grid, scoring='accuracy')
+    #
+    # grid_search_ABC.fit(train_x, train_y)
+    #
+    # print('Best parameter set: %s ' % grid_search_ABC.best_params_)
+    # print('CV Accuracy: %.3f' % grid_search_ABC.best_score_)
+    #
+    # clf = grid_search_ABC.best_estimator_
+    # print('Test Accuracy: %.3f' % clf.score(test_x, test_y))
 
     # scores = cross_val_score(estimator=ada,
     #                          X=train_x,
@@ -556,21 +513,22 @@ if __name__ == '__main__':
     #
     # print("Accuracy: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "ada"))
 
-    param_grid = {"max_depth": [3, 5, 10],
-                  "max_features": [None, "log2", "auto"],
-                  "n_estimators": [250, 500]
-                  }
-
-    print("GradientBoostingClassifier")
-    gbc = GradientBoostingClassifier(subsample=0.5, learning_rate=0.01,
-                                     random_state=3, min_samples_leaf=1)
-
-    grid_search_GBC = GridSearchCV(gbc, param_grid=param_grid, scoring='accuracy')
-
-    grid_search_GBC.fit(train_x, train_y)
-
-    print('Best parameter set: %s ' % grid_search_GBC.best_params_)
-    print('CV Accuracy: %.3f' % grid_search_GBC.best_score_)
+    # GBC CLASSIFIER
+    # param_grid = {"max_depth": [10, 15, 20],
+    #               "max_features": [None],
+    #               "n_estimators": [500, 1000]
+    #               }
+    #
+    # print("GradientBoostingClassifier")
+    # gbc = GradientBoostingClassifier(subsample=0.5, learning_rate=0.01,
+    #                                  random_state=3, min_samples_leaf=1)
+    #
+    # grid_search_GBC = GridSearchCV(gbc, param_grid=param_grid, scoring='accuracy')
+    #
+    # grid_search_GBC.fit(train_x, train_y)
+    #
+    # print('Best parameter set: %s ' % grid_search_GBC.best_params_)
+    # print('CV Accuracy: %.3f' % grid_search_GBC.best_score_)
     # scores = cross_val_score(estimator=clf,
     #                          X=train_x,
     #                          y=train_y,
@@ -578,23 +536,80 @@ if __name__ == '__main__':
     #                          scoring='accuracy')
     # print("Accuracy: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "GBC"))
 
-    param_grid = {"weights": [[1, 1, 1, 2], [1, 1, 1, 3], [1, 1, 1, 4]]
-                  }
-
-    eclf1 = VotingClassifier(estimators=[('lr', lgALL), ('rf', clf), ('gnb', gnbALL), ('knn', knn_ttALL)],
-                             voting='soft')
-
-    grid_search_eclf1 = GridSearchCV(eclf1, param_grid=param_grid, scoring='accuracy')
-
-    grid_search_eclf1.fit(train_x, train_y)
-
-    print('Best parameter set: %s ' % grid_search_eclf1.best_params_)
-    print('CV Accuracy: %.3f' % grid_search_eclf1.best_score_)
-
+    # param_grid = {"n_estimators": [1000, 2500, 5000],
+    #               'colsample_bytree': [0.6, 0.8],
+    #               'subsample': [0.7, 0.8],
+    #               "categorical_feature": ["2,3,4,5"],
+    #               'random_state': [None, 42, 501],
+    #               "subsample_for_bin": [20000, 50000, 100000],
+    #               "learning_rate": [0.1, 0.01, 0.001]
+    #               }
     #
-    # clf_labels = ['VotingClassifier', 'Logistic Regression with ALL', 'Random Forest with ALL', 'GNB with ALL',
-    #               'KNN with ALL', 'DecisionTree', 'AdaBoost']
-    # all_clf = [eclf1, lgALL, clf, gnbALL, knn_ttALL, tree, ada, eclf1]
+    # # 'reg_alpha': [0.5, 1.],
+    # # 'reg_lambda': [0.5, 1.],
+    #
+    # print("Light Gradient Boost Classifier")
+    lgbc = LGBMClassifier(num_leaves=127, colsample_bytree=0.8, subsample=0.7, learning_rate=0.001, n_estimators=5000,
+                          subsample_for_bin=500000)
+    #
+    # grid_search_LGBM = GridSearchCV(gbc, param_grid=param_grid, scoring='accuracy')
+    # # calculateKFoldvalidation(train_y, train_x, gbc)
+    #
+    # scores = cross_val_score(estimator=lgbc, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    # print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "LGBM"))
+    # lgbc.fit(train_x, train_y)
+    #
+    # print('Best parameter set: %s ' % grid_search_LGBM.best_params_)
+    # print('CV Accuracy: %.4f' % grid_search_LGBM.best_score_)
+
+    import xgboost as xgb
+
+    param_grid = {"n_estimators": [2500, 5000],
+                  "gamma": [10, 20],
+                  "max_depth": [20, 30],
+                  "learning_rate": [0.01]
+                  }
+    #                   'reg_alpha': [0.5, 1, 1.2],
+
+    print("XGBC")
+    xGBC = xgb.XGBClassifier(n_estimators=2500, gamma=10, max_depth=20, learning_rate=0.01)
+    scores = cross_val_score(estimator=xGBC, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "XGBM"))
+    xGBC.fit(train_x, train_y)
+
+    # grid_search_XGBM = GridSearchCV(xGBC, param_grid=param_grid, scoring='accuracy')
+    # grid_search_XGBM.fit(train_x, train_y)
+
+    # print("Accuracy: %0.4f (+/- %0.4f) [%s]" % (scores.   mean(), scores.std(), "XGBC"))
+
+    # print('Best parameter set: %s ' % grid_search_XGBM.best_params_)
+    #     # print('CV Accuracy: %.4f' % grid_search_XGBM.best_score_)
+    #
+    # param_grid = {"weights": [[1, 1, 1, 1]]
+    #               }
+    #
+    # print("Voting")
+    # eclf1 = VotingClassifier(estimators=[('xGBC', xGBC), ('rf', clf), ('lGBC', gbc), ('knn', knn_ttALL)],
+    #                          voting='soft')
+    #
+    # scores = cross_val_score(estimator=eclf1,X=train_x,y=train_y,cv=10,scoring='accuracy', n_jobs=2)
+
+    print("CatBoost")
+    catGBC = CatBoostClassifier(depth=9, iterations=2000, l2_leaf_reg=1, learning_rate=0.03)
+    scores = cross_val_score(estimator=catGBC, X=train_x, y=train_y, cv=10, scoring='accuracy', n_jobs=2)
+    print("ROC_AUC: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "CATGBM"))
+    # catGBC.fit(train_x, train_y)
+
+    print("VotingClassifier")
+    eclf1 = VotingClassifier(estimators=[('xGBC', xGBC), ('lGBC', lgbc), ('catGBC', catGBC)],
+                             voting='soft')
+    scores = cross_val_score(estimator=eclf1, X=train_x, y=train_y, cv=10, scoring='roc_auc', n_jobs=2)
+    print("Accuracy: %0.4f (+/- %0.4f) [%s]" % (scores.mean(), scores.std(), "voting classifier"))
+
+    # THIS WAS USED WHEN COMPARING
+    # clf_labels = ['Light Gradient Boost Classifier', 'Extreme Gradient Boost Classifier',
+    #               'KNN with ALL']
+    # all_clf = [lgbc, xGBC, knn_ttALL]
     # for clf, label in zip(all_clf, clf_labels):
     #     scores = cross_val_score(estimator=clf,
     #                              X=train_x,
