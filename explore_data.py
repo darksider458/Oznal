@@ -211,6 +211,7 @@ def downsampleDataset(df_transformed):
 # main method
 if __name__ == '__main__':
     # we load the csv
+    # CLEANED DATASET LINK - https://drive.google.com/open?id=1IqRQFrpFPDK3sQq_wEeksKontFbGtake
     df = pd.read_csv('ks_with_days_201612.csv', encoding="ISO-8859-1", sep='\t',
                      na_values=['NAN'])
     df.head()
